@@ -1,0 +1,52 @@
+name: Build XHToken/llama.cpp for Spark-X2.5-4B (CUDA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # или self-hosted с NVIDIA GPU и CUDA Toolkit
+
+    steps:
+      - name: Checkout XHToken/llama.cpp repository
+        uses: actions/checkout@v4
+        with:
+          repository: XHToken/llama.cpp
+          path: llama.cpp-spark
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Get commit SHA
+        id: get_commit
+        run: |
+          cd llama.cpp-spark
+          echo "SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Build with CUDA support
+        run: |
+          cd llama.cpp-spark
+          mkdir -p build && cd build
+          cmake .. -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release -j $(nproc)
+
+      - name: Package artifacts
+        run: |
+          cd llama.cpp-spark/build
+          mkdir -p package
+          cp bin/* package/ 2>/dev/null || true
+          cd package
+          zip -r ../xhtoken-llama-${{ env.SHA }}-linux-x64-cuda.zip .
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xhtoken-llama-${{ env.SHA }}-linux-x64-cuda
+          path: llama.cpp-spark/build/xhtoken-llama-${{ env.SHA }}-linux-x64-cuda.zip
