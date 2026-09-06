@@ -1,4 +1,4 @@
-name: Build XHToken/llama.cpp for Spark-X2.5-4B (CUDA)
+name: Build XHToken/llama.cpp for Spark-X2.5-4B (Vulkan)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest  # или self-hosted с NVIDIA GPU и CUDA Toolkit
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout XHToken/llama.cpp repository
@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake
+          sudo apt-get install -y build-essential cmake libvulkan-dev vulkan-validationlayers
 
       - name: Get commit SHA
         id: get_commit
@@ -29,11 +29,11 @@ jobs:
           cd llama.cpp-spark
           echo "SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Build with CUDA support
+      - name: Build with Vulkan support
         run: |
           cd llama.cpp-spark
           mkdir -p build && cd build
-          cmake .. -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build . --config Release -j $(nproc)
 
       - name: Package artifacts
@@ -42,11 +42,11 @@ jobs:
           mkdir -p package
           cp bin/* package/ 2>/dev/null || true
           cd package
-          zip -r ../xhtoken-llama-${{ env.SHA }}-linux-x64-cuda.zip .
+          zip -r ../xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan.zip .
           cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xhtoken-llama-${{ env.SHA }}-linux-x64-cuda
-          path: llama.cpp-spark/build/xhtoken-llama-${{ env.SHA }}-linux-x64-cuda.zip
+          name: xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan
+          path: llama.cpp-spark/build/xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan.zip
