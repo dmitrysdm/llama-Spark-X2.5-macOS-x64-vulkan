@@ -1,4 +1,4 @@
-name: Build XHToken/llama.cpp for Spark-X2.5-4B (Vulkan)
+name: Build XHToken/llama.cpp for Spark-X2.5-4B (macOS x64, Vulkan)
 
 on:
   workflow_dispatch:
@@ -9,44 +9,94 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout XHToken/llama.cpp repository
         uses: actions/checkout@v4
         with:
           repository: XHToken/llama.cpp
+          # ветка по умолчанию — master (можно указать явно, если нужно)
+          # ref: master
           path: llama.cpp-spark
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake libvulkan-dev vulkan-validationlayers shaderc
+          brew update
+          brew install cmake
+          brew install vulkan-headers vulkan-loader molten-vk shaderc spirv-headers
 
       - name: Get commit SHA
-        id: get_commit
+        id: get_sha
         run: |
           cd llama.cpp-spark
           echo "SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Build with Vulkan support
+      - name: Build with Vulkan support (link directly to MoltenVK)
         run: |
           cd llama.cpp-spark
           mkdir -p build && cd build
-          cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-          cmake --build . --config Release -j $(nproc)
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_VULKAN=ON \
+            -DGGML_METAL=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_USE_OPENSSL=OFF \
+            -DVulkan_LIBRARY=/usr/local/lib/libMoltenVK.dylib \
+            -DVulkan_INCLUDE_DIR=/usr/local/include
+          cmake --build . --config Release -j $(sysctl -n hw.ncpu)
 
-      - name: Package artifacts
+      - name: Package artifacts with full dependency collection and RPATH fix
         run: |
           cd llama.cpp-spark/build
           mkdir -p package
-          cp bin/* package/ 2>/dev/null || true
+          cp -r bin/* package/ 2>/dev/null || true
+          cp /usr/local/lib/libMoltenVK.dylib package/ 2>/dev/null || true
+
+          collect_deps() {
+            local file="$1"
+            if [[ ! -f "$file" ]]; then return; fi
+            otool -L "$file" 2>/dev/null | grep -E '/usr/local/opt|/usr/local/Cellar|/usr/local/lib' | awk '{print $1}' | while read dep; do
+              if [[ -L "$dep" ]]; then
+                dep=$(readlink -f "$dep")
+              fi
+              echo "$dep"
+            done
+          }
+
+          DEPS_FILE=$(mktemp)
+          for f in package/*; do
+            if [[ -f "$f" ]]; then
+              collect_deps "$f" >> "$DEPS_FILE"
+            fi
+          done
+          sort -u "$DEPS_FILE" | while read dep; do
+            if [[ -f "$dep" ]]; then
+              cp -L "$dep" package/ 2>/dev/null || true
+            fi
+          done
+          rm -f "$DEPS_FILE"
+
           cd package
-          zip -r ../xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan.zip .
+
+          for file in *; do
+            if [[ -f "$file" ]]; then
+              deps=$(otool -L "$file" 2>/dev/null | grep -E '(@rpath|/usr/local/opt|/usr/local/Cellar|/usr/local/lib)' | awk '{print $1}')
+              for dep in $deps; do
+                libname=$(basename "$dep")
+                install_name_tool -change "$dep" "@executable_path/$libname" "$file" 2>/dev/null || true
+              done
+              if [[ "$file" == *.dylib ]]; then
+                install_name_tool -id "@executable_path/$file" "$file" 2>/dev/null || true
+              fi
+            fi
+          done
+
+          zip -r ../xhtoken-llama-${{ env.SHA }}-bin-macos-x64-vulkan.zip .
           cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan
-          path: llama.cpp-spark/build/xhtoken-llama-${{ env.SHA }}-linux-x64-vulkan.zip
+          name: xhtoken-llama-${{ env.SHA }}-bin-macos-x64-vulkan
+          path: llama.cpp-spark/build/xhtoken-llama-${{ env.SHA }}-bin-macos-x64-vulkan.zip
